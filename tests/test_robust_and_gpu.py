@@ -1,6 +1,6 @@
 import numpy as np
 
-from phylox.gpu import ou_log_likelihood_torch, torch_available
+from phylox.gpu import ou_log_likelihood_torch, resolve_torch_device, torch_available
 from phylox.optimize import OUModelParameters, score_ou_model
 from phylox.ou_likelihood import ou_log_likelihood
 from phylox.pipeline import InferenceConfig, infer_species_tree_ml
@@ -125,3 +125,12 @@ def test_torch_likelihood_matches_numpy_when_available():
         dtype="float64",
     )
     assert np.isclose(ll_np, ll_t, atol=1e-7, rtol=1e-7)
+
+
+def test_resolve_torch_device_paths():
+    if not torch_available():
+        return
+    auto = resolve_torch_device("auto")
+    assert auto in {"cpu", "cuda", "mps"}
+    mps = resolve_torch_device("mps")
+    assert mps in {"cpu", "mps"}

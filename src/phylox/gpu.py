@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -33,9 +34,17 @@ def resolve_torch_device(preferred: str = "cuda") -> str:
     if torch is None:
         raise RuntimeError("PyTorch is not installed")
     pref = preferred.lower()
+    if pref in {"auto", "best"}:
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
     if pref.startswith("cuda"):
         if torch.cuda.is_available():
             return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
         return "cpu"
     if pref == "mps":
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -56,7 +65,10 @@ def build_torch_score_bundle(
         raise RuntimeError("PyTorch is not installed")
 
     dev = resolve_torch_device(device)
-    torch_dtype = _parse_torch_dtype(dtype)
+    if dev == "mps":
+        # Allow unsupported ops to fall back to CPU on Apple Silicon.
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    torch_dtype = _resolve_torch_dtype_for_device(dtype=dtype, device=dev)
 
     prep = _prepare_static_tensors(
         embeddings=embeddings,
@@ -132,7 +144,7 @@ def ou_log_likelihood_torch(
         dim_to_partition=dim_to_partition,
         params=params,
         device=bundle.device,
-        dtype=_parse_torch_dtype(dtype),
+        dtype=_resolve_torch_dtype_for_device(dtype=dtype, device=bundle.device),
     )
     return _ou_log_likelihood_torch_prepared(
         tree=tree,
@@ -389,3 +401,24 @@ def _parse_torch_dtype(dtype: str):
     if d in {"bfloat16", "bf16"}:
         return torch.bfloat16
     raise ValueError(f"unsupported torch dtype '{dtype}'")
+
+
+def _resolve_torch_dtype_for_device(dtype: str, device: str):
+    if torch is None:
+        raise RuntimeError("PyTorch is not installed")
+    requested = _parse_torch_dtype(dtype)
+
+    candidates = [requested]
+    # MPS commonly has dtype limitations; ensure we pick a supported one.
+    if device == "mps":
+        for alt in (torch.float32, torch.float16):
+            if alt not in candidates:
+                candidates.append(alt)
+
+    for cand in candidates:
+        try:
+            _ = torch.empty((1,), device=device, dtype=cand)
+            return cand
+        except Exception:
+            continue
+    raise RuntimeError(f"no supported dtype found for device '{device}'")

@@ -51,7 +51,7 @@ class InferenceConfig:
     robust_optimize_branch_lengths: bool = True
 
     use_gpu: bool = False
-    gpu_device: str = "cuda"
+    gpu_device: str = "auto"
     gpu_dtype: str = "float32"
     gpu_require_cuda: bool = False
     nni_batch_scoring: bool = True

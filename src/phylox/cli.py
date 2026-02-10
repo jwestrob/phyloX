@@ -30,7 +30,7 @@ def main() -> None:
     parser.add_argument("--robust-dof-init", type=float, default=4.0)
     parser.add_argument("--no-robust-optimize-dof", action="store_true")
     parser.add_argument("--use-gpu", action="store_true", help="Use torch-based scoring when available")
-    parser.add_argument("--gpu-device", default="cuda", help="cuda|cpu|mps")
+    parser.add_argument("--gpu-device", default="auto", help="auto|cuda|cpu|mps")
     parser.add_argument("--gpu-dtype", default="float32", help="float32|float64|float16|bfloat16")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()

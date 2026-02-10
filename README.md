@@ -69,6 +69,22 @@ Robust + GPU example:
   --gpu-device cuda
 ```
 
+Apple Silicon (MPS) example:
+
+```bash
+.venv/bin/phylox-fit \
+  --input data/input_embeddings.npz \
+  --out-newick results/tree_mps.nwk \
+  --out-npz results/model_fit_mps.npz \
+  --use-gpu \
+  --gpu-device mps \
+  --gpu-dtype float32
+```
+
+Notes:
+- `--gpu-device auto` (default) now picks `cuda`, then `mps`, then `cpu`.
+- On MPS, unsupported ops are allowed to fall back to CPU.
+
 ## Scaling Benchmarks
 
 Run the default 500/1000/5000 benchmark sweep:
