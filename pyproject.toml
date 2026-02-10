@@ -14,10 +14,14 @@ dependencies = [
 
 [project.scripts]
 phylox-fit = "phylox.cli:main"
+phylox-benchmark-scale = "phylox.benchmark:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+]
+gpu = [
+  "torch>=2.2",
 ]
 
 [tool.setuptools]

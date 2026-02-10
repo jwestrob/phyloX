@@ -34,34 +34,51 @@ def enumerate_nni_moves(
     tree: PhyloTree,
     score_fn: Callable[[PhyloTree], float],
     current_score: float | None = None,
+    batch_score_fn: Callable[[list[PhyloTree]], np.ndarray] | None = None,
 ) -> list[NNIMove]:
     """
     Evaluate best NNI alternative for each internal binary edge.
     """
     base_score = float(score_fn(tree)) if current_score is None else float(current_score)
-    moves: list[NNIMove] = []
+    edge_alts: list[tuple[int, int, list[tuple[int, int, PhyloTree]]]] = []
+    flat_alts: list[PhyloTree] = []
     for edge_idx in tree.internal_edge_indices():
         u, v, _ = tree.edges[edge_idx]
         alts = nni_alternatives(tree, u, v)
-        best_delta = -np.inf
-        best_tree: PhyloTree | None = None
-        best_swap: tuple[int, int] | None = None
-        best_score = base_score
-        for swap_u, swap_v, t_alt in alts:
-            s = float(score_fn(t_alt))
-            d = s - base_score
-            if d > best_delta:
-                best_delta = d
-                best_tree = t_alt
-                best_swap = (swap_u, swap_v)
-                best_score = s
-        if best_tree is not None and best_swap is not None and best_delta > 0:
+        edge_alts.append((u, v, alts))
+        flat_alts.extend([t for _, _, t in alts])
+
+    batch_scores: np.ndarray | None = None
+    if batch_score_fn is not None and flat_alts:
+        try:
+            batch_scores = np.asarray(batch_score_fn(flat_alts), dtype=np.float64)
+            if batch_scores.shape != (len(flat_alts),):
+                batch_scores = None
+        except Exception:
+            batch_scores = None
+
+    moves: list[NNIMove] = []
+    offset = 0
+    for u, v, alts in edge_alts:
+        if not alts:
+            continue
+        if batch_scores is None:
+            scores = np.asarray([float(score_fn(t)) for _, _, t in alts], dtype=np.float64)
+        else:
+            scores = batch_scores[offset : offset + len(alts)]
+        offset += len(alts)
+
+        best_i = int(np.argmax(scores))
+        best_score = float(scores[best_i])
+        best_delta = best_score - base_score
+        if best_delta > 0:
+            swap_u, swap_v, _ = alts[best_i]
             moves.append(
                 NNIMove(
                     edge=(u, v),
-                    swap=best_swap,
+                    swap=(swap_u, swap_v),
                     delta_log_likelihood=float(best_delta),
-                    new_log_likelihood=float(best_score),
+                    new_log_likelihood=best_score,
                 )
             )
     moves.sort(key=lambda x: x.delta_log_likelihood, reverse=True)
@@ -71,6 +88,7 @@ def enumerate_nni_moves(
 def nni_hillclimb(
     tree: PhyloTree,
     score_fn: Callable[[PhyloTree], float],
+    batch_score_fn: Callable[[list[PhyloTree]], np.ndarray] | None = None,
     max_rounds: int = 20,
     edge_disjoint_batch: bool = True,
     min_delta: float = 1e-9,
@@ -80,7 +98,12 @@ def nni_hillclimb(
     history = [SearchIteration(step="init", iteration=0, log_likelihood=cur_score)]
 
     for it in range(1, max_rounds + 1):
-        moves = enumerate_nni_moves(cur_tree, score_fn, current_score=cur_score)
+        moves = enumerate_nni_moves(
+            cur_tree,
+            score_fn,
+            current_score=cur_score,
+            batch_score_fn=batch_score_fn,
+        )
         moves = [m for m in moves if m.delta_log_likelihood > min_delta]
         if not moves:
             break
@@ -155,6 +178,7 @@ def spr_escape_move(
 def nni_with_optional_spr(
     tree: PhyloTree,
     score_fn: Callable[[PhyloTree], float],
+    batch_score_fn: Callable[[list[PhyloTree]], np.ndarray] | None = None,
     outer_rounds: int = 5,
     nni_rounds: int = 8,
     use_spr: bool = True,
@@ -164,7 +188,13 @@ def nni_with_optional_spr(
     history = [SearchIteration(step="init", iteration=0, log_likelihood=cur_score)]
 
     for i in range(1, outer_rounds + 1):
-        nni = nni_hillclimb(cur_tree, score_fn, max_rounds=nni_rounds, edge_disjoint_batch=True)
+        nni = nni_hillclimb(
+            cur_tree,
+            score_fn,
+            batch_score_fn=batch_score_fn,
+            max_rounds=nni_rounds,
+            edge_disjoint_batch=True,
+        )
         cur_tree = nni.tree
         cur_score = nni.log_likelihood
         history.append(SearchIteration(step="nni", iteration=i, log_likelihood=cur_score))

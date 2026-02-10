@@ -8,6 +8,9 @@ Current implementation focus:
 - M2: NNI hillclimb with edge-disjoint batching and optional SPR escape.
 - M3: partitioned species-tree and gene-tree orchestration.
 - M4: tier-1 blockwise rates and multi-start search.
+- M5: robust Student-t noise refinement (EM-style latent precision updates).
+- GPU-capable scoring path for likelihood and batched NNI candidate scoring (PyTorch optional).
+- Scale benchmark runner for 500/1k/5k taxa experiments.
 
 ## Quick Start
 
@@ -16,6 +19,12 @@ Install (editable):
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .[dev]
+```
+
+Optional GPU install:
+
+```bash
+.venv/bin/python -m pip install -e '.[dev,gpu]'
 ```
 
 Run tests:
@@ -45,4 +54,31 @@ Example:
   --out-npz results/model_fit.npz \
   --n-starts 4 \
   --bc-rounds 3
+```
+
+Robust + GPU example:
+
+```bash
+.venv/bin/phylox-fit \
+  --input data/input_embeddings.npz \
+  --out-newick results/tree_robust.nwk \
+  --out-npz results/model_fit_robust.npz \
+  --robust-student-t \
+  --robust-em-rounds 3 \
+  --use-gpu \
+  --gpu-device cuda
+```
+
+## Scaling Benchmarks
+
+Run the default 500/1000/5000 benchmark sweep:
+
+```bash
+.venv/bin/phylox-benchmark-scale --out-json results/scale_benchmark.json
+```
+
+Quick smoke benchmark:
+
+```bash
+.venv/bin/phylox-benchmark-scale --quick --taxa-sizes 200,200,200
 ```

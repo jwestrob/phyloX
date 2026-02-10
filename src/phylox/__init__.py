@@ -7,7 +7,13 @@ from .data import (
     partition_weights_from_mapping,
     split_concatenated_embeddings,
 )
-from .distance import NeighborJoiningResult, masked_euclidean_distance_matrix, neighbor_joining
+from .benchmark import ScaleBenchmarkRow, run_scale_benchmark
+from .distance import (
+    NeighborJoiningResult,
+    masked_euclidean_distance_matrix,
+    neighbor_joining,
+    repair_infinite_distances,
+)
 from .metrics import all_quartet_agreement, bipartition_splits, rf_distance, sampled_quartet_agreement
 from .optimize import (
     OUModelParameters,
@@ -19,6 +25,13 @@ from .optimize import (
     optimize_branch_lengths_coordinate,
     optimize_partition_parameters,
     score_ou_model,
+)
+from .gpu import (
+    TorchScoreBundle,
+    build_torch_score_bundle,
+    ou_log_likelihood_torch,
+    resolve_torch_device,
+    torch_available,
 )
 from .ou_likelihood import (
     OULikelihoodResult,
@@ -53,6 +66,12 @@ from .search import (
     nni_with_optional_spr,
     spr_escape_move,
 )
+from .robust import (
+    StudentTEMRecord,
+    StudentTEMResult,
+    compute_student_t_precisions,
+    fit_student_t_em,
+)
 from .simulate import (
     SimulatedDataset,
     simulate_ou_embeddings,
@@ -75,9 +94,13 @@ __all__ = [
     "RefinementResult",
     "RootedTree",
     "SearchIteration",
+    "ScaleBenchmarkRow",
     "SimulatedDataset",
     "SpeciesTreeResult",
     "StartResult",
+    "StudentTEMRecord",
+    "StudentTEMResult",
+    "TorchScoreBundle",
     "TopologySearchResult",
     "WhiteningResult",
     "all_quartet_agreement",
@@ -86,7 +109,9 @@ __all__ = [
     "apply_spr_move",
     "bipartition_splits",
     "build_contiguous_blocks",
+    "build_torch_score_bundle",
     "compute_partition_weights",
+    "compute_student_t_precisions",
     "concatenate_partition_embeddings",
     "coverage_noise_scale",
     "enumerate_nni_moves",
@@ -101,13 +126,17 @@ __all__ = [
     "optimize_branch_lengths_coordinate",
     "optimize_partition_parameters",
     "ou_log_likelihood",
+    "ou_log_likelihood_torch",
     "partition_indices",
     "partition_presence_from_mask",
     "partition_weights_from_mapping",
     "pairwise_leaf_distances",
     "preprocess_embeddings",
     "regress_out_confounders",
+    "repair_infinite_distances",
     "rf_distance",
+    "run_scale_benchmark",
+    "fit_student_t_em",
     "sampled_quartet_agreement",
     "score_ou_model",
     "simulate_ou_embeddings",
@@ -116,6 +145,8 @@ __all__ = [
     "split_concatenated_embeddings",
     "spr_escape_move",
     "to_newick",
+    "resolve_torch_device",
+    "torch_available",
     "zca_whiten_global",
     "zca_whiten_partitions",
 ]

@@ -1,6 +1,6 @@
 import numpy as np
 
-from phylox.distance import masked_euclidean_distance_matrix, neighbor_joining
+from phylox.distance import masked_euclidean_distance_matrix, neighbor_joining, repair_infinite_distances
 
 
 def test_masked_distance_matrix_basic():
@@ -43,6 +43,20 @@ def test_masked_distance_with_no_overlap_is_inf():
     )
     d = masked_euclidean_distance_matrix(z, m)
     assert np.isinf(d[0, 1])
+
+
+def test_repair_infinite_distances_makes_matrix_finite():
+    d = np.asarray(
+        [
+            [0.0, np.inf, 2.0],
+            [np.inf, 0.0, 3.0],
+            [2.0, 3.0, 0.0],
+        ]
+    )
+    fixed = repair_infinite_distances(d)
+    assert np.all(np.isfinite(fixed))
+    assert np.allclose(fixed, fixed.T)
+    assert np.allclose(np.diag(fixed), 0.0)
 
 
 def test_neighbor_joining_builds_valid_tree():

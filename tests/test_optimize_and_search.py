@@ -1,7 +1,7 @@
 import numpy as np
 
 from phylox.optimize import OUModelParameters, optimize_branch_lengths_coordinate, optimize_partition_parameters, score_ou_model
-from phylox.search import apply_nni_swap, apply_spr_move, nni_hillclimb
+from phylox.search import apply_nni_swap, apply_spr_move, enumerate_nni_moves, nni_hillclimb
 from phylox.simulate import simulate_ou_embeddings, simulate_random_binary_tree
 from phylox.tree import PhyloTree
 
@@ -71,6 +71,27 @@ def test_nni_hillclimb_non_decreasing():
     ll0 = score(start_tree)
     result = nni_hillclimb(start_tree, score, max_rounds=6, edge_disjoint_batch=True)
     assert result.log_likelihood >= ll0 - 1e-8
+
+
+def test_nni_enumeration_batch_matches_scalar():
+    tree = simulate_random_binary_tree(n_taxa=8, seed=31)
+    dim_map = np.repeat(np.arange(2), repeats=[10, 10]).astype(np.int64)
+    alpha = np.asarray([0.9, 1.1], dtype=np.float64)
+    sigma2 = np.asarray([0.07, 0.09], dtype=np.float64)
+    z, m = simulate_ou_embeddings(tree, dim_map, alpha, sigma2, seed=32)
+    params = OUModelParameters(alpha_by_partition=alpha, sigma2_by_partition=sigma2)
+    score = lambda t: score_ou_model(t, z, m, dim_map, params)
+
+    scalar = enumerate_nni_moves(tree, score)
+    batch = enumerate_nni_moves(
+        tree,
+        score,
+        batch_score_fn=lambda trees: np.asarray([score(t) for t in trees], dtype=np.float64),
+    )
+
+    sig_scalar = [(mv.edge, mv.swap) for mv in scalar]
+    sig_batch = [(mv.edge, mv.swap) for mv in batch]
+    assert sig_scalar == sig_batch
 
 
 def test_apply_spr_move_preserves_tree_shape():

@@ -5,7 +5,8 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from .distance import masked_euclidean_distance_matrix, neighbor_joining
+from .distance import masked_euclidean_distance_matrix, neighbor_joining, repair_infinite_distances
+from .gpu import build_torch_score_bundle, torch_available
 from .optimize import (
     OUModelParameters,
     RefinementResult,
@@ -14,6 +15,7 @@ from .optimize import (
     score_ou_model,
 )
 from .preprocess import coverage_noise_scale, preprocess_embeddings
+from .robust import fit_student_t_em
 from .search import nni_hillclimb, nni_with_optional_spr
 from .tree import PhyloTree
 
@@ -39,6 +41,20 @@ class InferenceConfig:
 
     fit_block_rates: bool = False
     n_blocks_per_partition: int = 1
+
+    robust_student_t: bool = False
+    robust_em_rounds: int = 2
+    robust_dof_init: float = 4.0
+    robust_optimize_dof: bool = True
+    robust_optimize_alpha: bool = True
+    robust_optimize_sigma2: bool = True
+    robust_optimize_branch_lengths: bool = True
+
+    use_gpu: bool = False
+    gpu_device: str = "cuda"
+    gpu_dtype: str = "float32"
+    gpu_require_cuda: bool = False
+    nni_batch_scoring: bool = True
 
 
 @dataclass(frozen=True)
@@ -142,6 +158,7 @@ def infer_species_tree_ml(
             dim_to_partition=dim_map,
             partition_weights=p_weights,
         )
+        dmat = repair_infinite_distances(dmat)
         if s > 0 and cfg.start_jitter > 0:
             dmat = _jitter_distances(dmat, jitter=cfg.start_jitter, rng=rng)
 
@@ -155,8 +172,20 @@ def infer_species_tree_ml(
             partition_weights=p_weights,
             coverage_scale=coverage,
         )
-        score_a = lambda t: score_ou_model(t, z_proc, m, dim_map, phase_a_params)
-        nni_a = nni_hillclimb(tree, score_a, max_rounds=cfg.phase_a_nni_rounds, edge_disjoint_batch=True)
+        score_a, batch_score_a = _build_score_functions(
+            embeddings=z_proc,
+            mask=m,
+            dim_to_partition=dim_map,
+            params=phase_a_params,
+            config=cfg,
+        )
+        nni_a = nni_hillclimb(
+            tree,
+            score_a,
+            batch_score_fn=batch_score_a,
+            max_rounds=cfg.phase_a_nni_rounds,
+            edge_disjoint_batch=True,
+        )
         tree = nni_a.tree
         history.append("phase-a-nni")
 
@@ -184,10 +213,36 @@ def infer_species_tree_ml(
             cur_ll = refined.log_likelihood
             history.append("phase-b-refine")
 
-            score_c = lambda t: score_ou_model(t, z_proc, m, dim_map, cur_params)
+            if cfg.robust_student_t:
+                robust = fit_student_t_em(
+                    tree=tree,
+                    embeddings=z_proc,
+                    mask=m,
+                    dim_to_partition=dim_map,
+                    params=cur_params,
+                    rounds=cfg.robust_em_rounds,
+                    dof_init=cfg.robust_dof_init,
+                    optimize_dof=cfg.robust_optimize_dof,
+                    optimize_branch_lengths=cfg.robust_optimize_branch_lengths,
+                    optimize_alpha=cfg.robust_optimize_alpha,
+                    optimize_sigma2=cfg.robust_optimize_sigma2,
+                )
+                tree = robust.tree
+                cur_params = robust.params
+                cur_ll = robust.log_likelihood
+                history.append("phase-b-robust-em")
+
+            score_c, batch_score_c = _build_score_functions(
+                embeddings=z_proc,
+                mask=m,
+                dim_to_partition=dim_map,
+                params=cur_params,
+                config=cfg,
+            )
             topo = nni_with_optional_spr(
                 tree=tree,
                 score_fn=score_c,
+                batch_score_fn=batch_score_c,
                 outer_rounds=1,
                 nni_rounds=cfg.phase_c_nni_rounds,
                 use_spr=cfg.use_spr,
@@ -288,3 +343,28 @@ def _jitter_distances(dmat: np.ndarray, jitter: float, rng: np.random.Generator)
             D[j, i] = val
     np.fill_diagonal(D, 0.0)
     return D
+
+
+def _build_score_functions(
+    embeddings: np.ndarray,
+    mask: np.ndarray,
+    dim_to_partition: np.ndarray,
+    params: OUModelParameters,
+    config: InferenceConfig,
+) -> tuple:
+    if config.use_gpu and torch_available(require_cuda=config.gpu_require_cuda):
+        try:
+            bundle = build_torch_score_bundle(
+                embeddings=embeddings,
+                mask=mask,
+                dim_to_partition=dim_to_partition,
+                params=params,
+                device=config.gpu_device,
+                dtype=config.gpu_dtype,
+            )
+            batch = bundle.batch_score_fn if config.nni_batch_scoring else None
+            return bundle.score_fn, batch
+        except Exception:
+            pass
+    score = lambda t: score_ou_model(t, embeddings, mask, dim_to_partition, params)
+    return score, None

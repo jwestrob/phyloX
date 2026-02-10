@@ -13,11 +13,11 @@
 | PX-M2-03 | M2 | Edge-disjoint NNI application loop | Codex | Review | PX-M2-02 | Move selection + iterative hillclimb |
 | PX-M3-01 | M3 | Enable partitioned concatenation species-tree mode | Codex | Review | PX-M2-03 | Multi-partition shared-topology path |
 | PX-M3-02 | M3 | Add coverage-aware noise scaling for missingness | Codex | Review | PX-M3-01 | Missing-data robustness |
-| PX-M3-03 | M3 | Scale tests for `n_taxa` 500/1k/5k | Unassigned | Backlog | PX-M3-02 | Runtime + memory benchmarks |
+| PX-M3-03 | M3 | Scale tests for `n_taxa` 500/1k/5k | Codex | Review | PX-M3-02 | Runtime + memory benchmarks |
 | PX-M4-01 | M4 | Add blockwise rate heterogeneity | Codex | Review | PX-M3-02 | Tier-1 ASRV analogue |
 | PX-M4-02 | M4 | Add multi-start orchestration and best-of-run selection | Codex | Review | PX-M2-03 | Search robustness tooling |
 | PX-M5-01 | M5 | Add limited-radius SPR escape moves | Codex | Review | PX-M4-02 | Optional topology escape |
-| PX-M5-02 | M5 | Add robust Student-t noise (EM scale-mixture) | Unassigned | Backlog | PX-M4-01 | Optional robustness model |
+| PX-M5-02 | M5 | Add robust Student-t noise (EM scale-mixture) | Codex | Review | PX-M4-01 | Optional robustness model |
 
 ## Notes
 - Claim a task by setting `Owner` and moving `Status` to `In Progress`.

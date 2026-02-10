@@ -26,6 +26,7 @@ def ou_log_likelihood(
     partition_weights: Sequence[float] | None = None,
     coverage_scale: np.ndarray | None = None,
     rate_by_dim: np.ndarray | None = None,
+    precision_weights: np.ndarray | None = None,
     gamma_rates_by_partition: Mapping[int, tuple[np.ndarray, np.ndarray]] | None = None,
     root: int | None = None,
     return_details: bool = False,
@@ -45,6 +46,7 @@ def ou_log_likelihood(
     - partition_weights: optional length n_partitions, default 1
     - coverage_scale: optional shape (n_taxa, n_partitions), default 1
     - rate_by_dim: optional per-dimension rate multiplier (tier-1 blockwise rates)
+    - precision_weights: optional per-observation latent precision matrix (n_taxa, d_total)
     - gamma_rates_by_partition: optional map p -> (rates, weights) for discrete-Gamma
     """
     (
@@ -56,6 +58,7 @@ def ou_log_likelihood(
         weights,
         coverage,
         dim_rate,
+        obs_precision,
     ) = _validate_and_prepare(
         tree=tree,
         embeddings=embeddings,
@@ -66,6 +69,7 @@ def ou_log_likelihood(
         partition_weights=partition_weights,
         coverage_scale=coverage_scale,
         rate_by_dim=rate_by_dim,
+        precision_weights=precision_weights,
     )
 
     rooted = tree.rooted(root=root)
@@ -88,6 +92,7 @@ def ou_log_likelihood(
                 sigma2=float(sigma2[p]),
                 coverage=coverage[:, p],
                 dim_rate=p_rates,
+                obs_precision=obs_precision[:, dim_idx],
                 gamma_rates=np.asarray(gamma_rates, dtype=np.float64),
                 gamma_weights=np.asarray(gamma_weights, dtype=np.float64),
             )
@@ -101,6 +106,7 @@ def ou_log_likelihood(
                 sigma2=float(sigma2[p]),
                 coverage=coverage[:, p],
                 dim_rate=p_rates,
+                obs_precision=obs_precision[:, dim_idx],
             )
             partition_terms[p] = float(np.sum(ll_dims))
 
@@ -122,6 +128,7 @@ def _partition_dim_log_likelihood(
     sigma2: float,
     coverage: np.ndarray,
     dim_rate: np.ndarray,
+    obs_precision: np.ndarray,
 ) -> np.ndarray:
     m = dim_idx.size
     n_nodes = rooted.num_nodes
@@ -135,7 +142,7 @@ def _partition_dim_log_likelihood(
 
     obs = mask[:, dim_idx]
     y = embeddings[:, dim_idx]
-    var = sigma2 * coverage[:, None]
+    var = sigma2 * coverage[:, None] / obs_precision
     inv_var = np.where(obs, 1.0 / var, 0.0)
 
     J[:n_taxa] = inv_var
@@ -188,6 +195,7 @@ def _partition_log_likelihood_discrete_gamma(
     sigma2: float,
     coverage: np.ndarray,
     dim_rate: np.ndarray,
+    obs_precision: np.ndarray,
     gamma_rates: np.ndarray,
     gamma_weights: np.ndarray,
 ) -> float:
@@ -216,6 +224,7 @@ def _partition_log_likelihood_discrete_gamma(
             sigma2=sigma2,
             coverage=coverage,
             dim_rate=dim_rate * gamma_rates[cat],
+            obs_precision=obs_precision,
         )
 
     mix = ll_cat + logw[:, None]
@@ -233,7 +242,9 @@ def _validate_and_prepare(
     partition_weights: Sequence[float] | None,
     coverage_scale: np.ndarray | None,
     rate_by_dim: np.ndarray | None,
+    precision_weights: np.ndarray | None,
 ) -> tuple[
+    np.ndarray,
     np.ndarray,
     np.ndarray,
     np.ndarray,
@@ -297,7 +308,16 @@ def _validate_and_prepare(
         if np.any(dim_rate <= 0):
             raise ValueError("rate_by_dim must be > 0")
 
-    return embeddings, mask, dim_to_partition, alpha, sigma2, weights, coverage, dim_rate
+    if precision_weights is None:
+        obs_precision = np.ones((n_taxa, d_total), dtype=np.float64)
+    else:
+        obs_precision = np.asarray(precision_weights, dtype=np.float64)
+        if obs_precision.shape != (n_taxa, d_total):
+            raise ValueError("precision_weights must have shape (n_taxa, d_total)")
+        if np.any(obs_precision <= 0):
+            raise ValueError("precision_weights must be > 0")
+
+    return embeddings, mask, dim_to_partition, alpha, sigma2, weights, coverage, dim_rate, obs_precision
 
 
 def make_blockwise_rate_by_dim(

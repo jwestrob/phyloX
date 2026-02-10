@@ -25,6 +25,13 @@ def main() -> None:
     parser.add_argument("--no-spr", action="store_true", help="Disable SPR escape moves")
     parser.add_argument("--whitening", choices=["partition", "global", "none"], default="partition")
     parser.add_argument("--no-confounder-regression", action="store_true")
+    parser.add_argument("--robust-student-t", action="store_true", help="Enable Student-t EM noise refinement")
+    parser.add_argument("--robust-em-rounds", type=int, default=2)
+    parser.add_argument("--robust-dof-init", type=float, default=4.0)
+    parser.add_argument("--no-robust-optimize-dof", action="store_true")
+    parser.add_argument("--use-gpu", action="store_true", help="Use torch-based scoring when available")
+    parser.add_argument("--gpu-device", default="cuda", help="cuda|cpu|mps")
+    parser.add_argument("--gpu-dtype", default="float32", help="float32|float64|float16|bfloat16")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -46,6 +53,13 @@ def main() -> None:
         bc_rounds=args.bc_rounds,
         phase_c_nni_rounds=args.phase_c_nni_rounds,
         use_spr=not args.no_spr,
+        robust_student_t=args.robust_student_t,
+        robust_em_rounds=args.robust_em_rounds,
+        robust_dof_init=args.robust_dof_init,
+        robust_optimize_dof=not args.no_robust_optimize_dof,
+        use_gpu=args.use_gpu,
+        gpu_device=args.gpu_device,
+        gpu_dtype=args.gpu_dtype,
     )
 
     result = infer_species_tree_ml(
@@ -83,6 +97,8 @@ def main() -> None:
         "n_partitions": int(np.max(dim_to_partition) + 1) if dim_to_partition.size else 0,
         "log_likelihood": float(result.log_likelihood),
         "n_starts": int(len(result.starts)),
+        "robust_student_t": bool(args.robust_student_t),
+        "use_gpu": bool(args.use_gpu),
         "out_newick": str(args.out_newick),
         "out_npz": str(args.out_npz) if args.out_npz is not None else None,
     }

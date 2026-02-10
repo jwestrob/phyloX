@@ -16,6 +16,8 @@ class OUModelParameters:
     partition_weights: np.ndarray | None = None
     coverage_scale: np.ndarray | None = None
     rate_by_dim: np.ndarray | None = None
+    precision_weights: np.ndarray | None = None
+    student_t_dof_by_partition: np.ndarray | None = None
     gamma_rates_by_partition: Mapping[int, tuple[np.ndarray, np.ndarray]] | None = None
 
     def with_alpha(self, alpha: np.ndarray) -> "OUModelParameters":
@@ -25,6 +27,8 @@ class OUModelParameters:
             partition_weights=self.partition_weights,
             coverage_scale=self.coverage_scale,
             rate_by_dim=self.rate_by_dim,
+            precision_weights=self.precision_weights,
+            student_t_dof_by_partition=self.student_t_dof_by_partition,
             gamma_rates_by_partition=self.gamma_rates_by_partition,
         )
 
@@ -35,6 +39,8 @@ class OUModelParameters:
             partition_weights=self.partition_weights,
             coverage_scale=self.coverage_scale,
             rate_by_dim=self.rate_by_dim,
+            precision_weights=self.precision_weights,
+            student_t_dof_by_partition=self.student_t_dof_by_partition,
             gamma_rates_by_partition=self.gamma_rates_by_partition,
         )
 
@@ -45,6 +51,34 @@ class OUModelParameters:
             partition_weights=self.partition_weights,
             coverage_scale=self.coverage_scale,
             rate_by_dim=np.asarray(rate_by_dim, dtype=np.float64),
+            precision_weights=self.precision_weights,
+            student_t_dof_by_partition=self.student_t_dof_by_partition,
+            gamma_rates_by_partition=self.gamma_rates_by_partition,
+        )
+
+    def with_precision_weights(self, precision_weights: np.ndarray | None) -> "OUModelParameters":
+        return OUModelParameters(
+            alpha_by_partition=self.alpha_by_partition,
+            sigma2_by_partition=self.sigma2_by_partition,
+            partition_weights=self.partition_weights,
+            coverage_scale=self.coverage_scale,
+            rate_by_dim=self.rate_by_dim,
+            precision_weights=(
+                None if precision_weights is None else np.asarray(precision_weights, dtype=np.float64)
+            ),
+            student_t_dof_by_partition=self.student_t_dof_by_partition,
+            gamma_rates_by_partition=self.gamma_rates_by_partition,
+        )
+
+    def with_student_t_dof(self, dof: np.ndarray | None) -> "OUModelParameters":
+        return OUModelParameters(
+            alpha_by_partition=self.alpha_by_partition,
+            sigma2_by_partition=self.sigma2_by_partition,
+            partition_weights=self.partition_weights,
+            coverage_scale=self.coverage_scale,
+            rate_by_dim=self.rate_by_dim,
+            precision_weights=self.precision_weights,
+            student_t_dof_by_partition=None if dof is None else np.asarray(dof, dtype=np.float64),
             gamma_rates_by_partition=self.gamma_rates_by_partition,
         )
 
@@ -82,6 +116,7 @@ def score_ou_model(
             partition_weights=params.partition_weights,
             coverage_scale=params.coverage_scale,
             rate_by_dim=params.rate_by_dim,
+            precision_weights=params.precision_weights,
             gamma_rates_by_partition=params.gamma_rates_by_partition,
         )
     )

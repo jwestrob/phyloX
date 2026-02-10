@@ -14,6 +14,46 @@ class NeighborJoiningResult:
     labels: list[str] | None = None
 
 
+def repair_infinite_distances(
+    distance_matrix: np.ndarray,
+    inflate: float = 2.0,
+    jitter: float = 1e-8,
+) -> np.ndarray:
+    """
+    Replace +inf pairwise entries with conservative large finite values.
+    """
+    D = np.asarray(distance_matrix, dtype=np.float64).copy()
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("distance_matrix must be square")
+    if np.any(np.isnan(D)):
+        raise ValueError("distance_matrix contains NaN")
+    if np.any(D < 0):
+        raise ValueError("distance_matrix must be non-negative")
+    if not np.allclose(D, D.T):
+        raise ValueError("distance_matrix must be symmetric")
+
+    n = D.shape[0]
+    np.fill_diagonal(D, 0.0)
+    finite = np.isfinite(D)
+    offdiag = ~np.eye(n, dtype=bool)
+    finite_off = D[finite & offdiag]
+    if finite_off.size == 0:
+        fill = 1.0
+    else:
+        fill = max(float(np.max(finite_off)) * inflate, float(np.median(finite_off)) * inflate)
+        fill = max(fill, 1e-6)
+
+    inf_idx = np.argwhere(~finite & offdiag)
+    for i, j in inf_idx:
+        # Deterministic tiny asymmetry breaker by index to avoid ties.
+        bump = jitter * (1.0 + (i + j) % 17)
+        v = fill + bump
+        D[i, j] = v
+        D[j, i] = v
+    np.fill_diagonal(D, 0.0)
+    return D
+
+
 def masked_euclidean_distance_matrix(
     embeddings: np.ndarray,
     mask: np.ndarray,
