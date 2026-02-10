@@ -48,6 +48,49 @@ class PhyloTree:
             adj[v].append((u, t))
         return adj
 
+    def neighbors(self, node: int) -> list[tuple[int, float]]:
+        if node < 0 or node >= self.num_nodes:
+            raise ValueError("node out of range")
+        out: list[tuple[int, float]] = []
+        for u, v, t in self.edges:
+            if u == node:
+                out.append((v, float(t)))
+            elif v == node:
+                out.append((u, float(t)))
+        return out
+
+    def degrees(self) -> np.ndarray:
+        deg = np.zeros(self.num_nodes, dtype=np.int64)
+        for u, v, _ in self.edges:
+            deg[u] += 1
+            deg[v] += 1
+        return deg
+
+    def internal_edge_indices(self) -> list[int]:
+        deg = self.degrees()
+        out: list[int] = []
+        for i, (u, v, _) in enumerate(self.edges):
+            if deg[u] > 1 and deg[v] > 1:
+                out.append(i)
+        return out
+
+    def edge_key_map(self) -> dict[tuple[int, int], int]:
+        out: dict[tuple[int, int], int] = {}
+        for i, (u, v, _) in enumerate(self.edges):
+            key = (u, v) if u < v else (v, u)
+            out[key] = i
+        return out
+
+    def with_edge_length(self, edge_index: int, new_length: float) -> "PhyloTree":
+        if edge_index < 0 or edge_index >= len(self.edges):
+            raise ValueError("edge_index out of range")
+        if new_length < 0:
+            raise ValueError("new_length must be non-negative")
+        updated = list(self.edges)
+        u, v, _ = updated[edge_index]
+        updated[edge_index] = (u, v, float(new_length))
+        return PhyloTree(num_nodes=self.num_nodes, edges=updated, leaf_count=self.leaf_count)
+
     def is_connected(self) -> bool:
         adj = self.adjacency()
         seen = np.zeros(self.num_nodes, dtype=bool)
@@ -126,3 +169,35 @@ def pairwise_leaf_distances(tree: PhyloTree) -> np.ndarray:
                     stack.append(nxt)
         out[src, :] = dist[:n]
     return out
+
+
+def to_newick(
+    tree: PhyloTree,
+    taxon_labels: list[str] | None = None,
+    root: int | None = None,
+) -> str:
+    """
+    Export tree to Newick. Output is rooted representation of the unrooted topology.
+    """
+    if taxon_labels is None:
+        taxon_labels = [f"T{i}" for i in range(tree.leaf_count)]
+    if len(taxon_labels) != tree.leaf_count:
+        raise ValueError("taxon_labels length must match leaf_count")
+
+    rooted = tree.rooted(root=root)
+
+    def render(node: int) -> str:
+        children = rooted.children[node]
+        if node < tree.leaf_count and len(children) == 0:
+            return taxon_labels[node]
+        if not children:
+            return f"N{node}"
+        parts = []
+        for ch in children:
+            subtree = render(ch)
+            blen = rooted.branch_length_to_parent[ch]
+            parts.append(f"{subtree}:{blen:.10f}")
+        name = "" if node >= tree.leaf_count else taxon_labels[node]
+        return f"({','.join(parts)}){name}"
+
+    return render(rooted.root) + ";"

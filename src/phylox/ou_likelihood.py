@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -25,6 +25,8 @@ def ou_log_likelihood(
     sigma2_by_partition: Sequence[float],
     partition_weights: Sequence[float] | None = None,
     coverage_scale: np.ndarray | None = None,
+    rate_by_dim: np.ndarray | None = None,
+    gamma_rates_by_partition: Mapping[int, tuple[np.ndarray, np.ndarray]] | None = None,
     root: int | None = None,
     return_details: bool = False,
 ) -> float | OULikelihoodResult:
@@ -42,8 +44,19 @@ def ou_log_likelihood(
     - alpha_by_partition, sigma2_by_partition: length n_partitions
     - partition_weights: optional length n_partitions, default 1
     - coverage_scale: optional shape (n_taxa, n_partitions), default 1
+    - rate_by_dim: optional per-dimension rate multiplier (tier-1 blockwise rates)
+    - gamma_rates_by_partition: optional map p -> (rates, weights) for discrete-Gamma
     """
-    embeddings, mask, dim_to_partition, alpha, sigma2, weights, coverage = _validate_and_prepare(
+    (
+        embeddings,
+        mask,
+        dim_to_partition,
+        alpha,
+        sigma2,
+        weights,
+        coverage,
+        dim_rate,
+    ) = _validate_and_prepare(
         tree=tree,
         embeddings=embeddings,
         mask=mask,
@@ -52,6 +65,7 @@ def ou_log_likelihood(
         sigma2_by_partition=sigma2_by_partition,
         partition_weights=partition_weights,
         coverage_scale=coverage_scale,
+        rate_by_dim=rate_by_dim,
     )
 
     rooted = tree.rooted(root=root)
@@ -62,15 +76,33 @@ def ou_log_likelihood(
         dim_idx = np.flatnonzero(dim_to_partition == p)
         if dim_idx.size == 0:
             continue
-        partition_terms[p] = _partition_log_likelihood(
-            rooted=rooted,
-            embeddings=embeddings,
-            mask=mask,
-            dim_idx=dim_idx,
-            alpha=float(alpha[p]),
-            sigma2=float(sigma2[p]),
-            coverage=coverage[:, p],
-        )
+        p_rates = dim_rate[dim_idx]
+        if gamma_rates_by_partition is not None and p in gamma_rates_by_partition:
+            gamma_rates, gamma_weights = gamma_rates_by_partition[p]
+            partition_terms[p] = _partition_log_likelihood_discrete_gamma(
+                rooted=rooted,
+                embeddings=embeddings,
+                mask=mask,
+                dim_idx=dim_idx,
+                alpha=float(alpha[p]),
+                sigma2=float(sigma2[p]),
+                coverage=coverage[:, p],
+                dim_rate=p_rates,
+                gamma_rates=np.asarray(gamma_rates, dtype=np.float64),
+                gamma_weights=np.asarray(gamma_weights, dtype=np.float64),
+            )
+        else:
+            ll_dims = _partition_dim_log_likelihood(
+                rooted=rooted,
+                embeddings=embeddings,
+                mask=mask,
+                dim_idx=dim_idx,
+                alpha=float(alpha[p]),
+                sigma2=float(sigma2[p]),
+                coverage=coverage[:, p],
+                dim_rate=p_rates,
+            )
+            partition_terms[p] = float(np.sum(ll_dims))
 
     total = float(np.dot(weights, partition_terms))
     if return_details:
@@ -81,7 +113,7 @@ def ou_log_likelihood(
     return total
 
 
-def _partition_log_likelihood(
+def _partition_dim_log_likelihood(
     rooted,
     embeddings: np.ndarray,
     mask: np.ndarray,
@@ -89,7 +121,8 @@ def _partition_log_likelihood(
     alpha: float,
     sigma2: float,
     coverage: np.ndarray,
-) -> float:
+    dim_rate: np.ndarray,
+) -> np.ndarray:
     m = dim_idx.size
     n_nodes = rooted.num_nodes
     n_taxa = embeddings.shape[0]
@@ -118,22 +151,18 @@ def _partition_log_likelihood(
             continue
         parent = int(rooted.parent[node])
         t = float(rooted.branch_length_to_parent[node])
-        a = np.exp(-alpha * t)
+        a = np.exp(-alpha * dim_rate * t)
         q = 1.0 - a * a
 
         Jc = J[node]
         hc = h[node]
         cc = c[node]
 
-        if q <= 1e-14:
-            Jmsg = (a * a) * Jc
-            hmsg = a * hc
-            cmsg = cc
-        else:
-            denom = 1.0 + q * Jc
-            Jmsg = (a * a) * Jc / denom
-            hmsg = a * hc / denom
-            cmsg = cc - 0.5 * np.log(denom) + 0.5 * (hc * hc) * q / denom
+        denom = 1.0 + q * Jc
+        a2 = a * a
+        Jmsg = a2 * Jc / denom
+        hmsg = a * hc / denom
+        cmsg = cc - 0.5 * np.log(denom) + 0.5 * (hc * hc) * q / denom
 
         J[parent] += Jmsg
         h[parent] += hmsg
@@ -147,7 +176,51 @@ def _partition_log_likelihood(
     # Integrate root with stationary prior x_root ~ N(0, 1).
     log_norm = -0.5 * np.log(1.0 + Jr)
     quad = 0.5 * (hr * hr) / (1.0 + Jr)
-    return float(np.sum(cr + log_norm + quad))
+    return cr + log_norm + quad
+
+
+def _partition_log_likelihood_discrete_gamma(
+    rooted,
+    embeddings: np.ndarray,
+    mask: np.ndarray,
+    dim_idx: np.ndarray,
+    alpha: float,
+    sigma2: float,
+    coverage: np.ndarray,
+    dim_rate: np.ndarray,
+    gamma_rates: np.ndarray,
+    gamma_weights: np.ndarray,
+) -> float:
+    if gamma_rates.ndim != 1 or gamma_weights.ndim != 1:
+        raise ValueError("gamma rates and weights must be 1D")
+    if gamma_rates.shape != gamma_weights.shape:
+        raise ValueError("gamma rates and weights must have same length")
+    if np.any(gamma_rates <= 0):
+        raise ValueError("gamma rates must be > 0")
+    if np.any(gamma_weights <= 0):
+        raise ValueError("gamma weights must be > 0")
+
+    weights = gamma_weights / np.sum(gamma_weights)
+    logw = np.log(weights)
+    c = gamma_rates.size
+    m = dim_idx.size
+    ll_cat = np.zeros((c, m), dtype=np.float64)
+
+    for cat in range(c):
+        ll_cat[cat] = _partition_dim_log_likelihood(
+            rooted=rooted,
+            embeddings=embeddings,
+            mask=mask,
+            dim_idx=dim_idx,
+            alpha=alpha,
+            sigma2=sigma2,
+            coverage=coverage,
+            dim_rate=dim_rate * gamma_rates[cat],
+        )
+
+    mix = ll_cat + logw[:, None]
+    maxv = np.max(mix, axis=0)
+    return float(np.sum(maxv + np.log(np.sum(np.exp(mix - maxv), axis=0))))
 
 
 def _validate_and_prepare(
@@ -159,7 +232,17 @@ def _validate_and_prepare(
     sigma2_by_partition: Sequence[float],
     partition_weights: Sequence[float] | None,
     coverage_scale: np.ndarray | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    rate_by_dim: np.ndarray | None,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     embeddings = np.asarray(embeddings, dtype=np.float64)
     mask = np.asarray(mask, dtype=bool)
     dim_to_partition = np.asarray(dim_to_partition, dtype=np.int64)
@@ -205,4 +288,62 @@ def _validate_and_prepare(
         if np.any(coverage <= 0):
             raise ValueError("coverage_scale must be > 0")
 
-    return embeddings, mask, dim_to_partition, alpha, sigma2, weights, coverage
+    if rate_by_dim is None:
+        dim_rate = np.ones(d_total, dtype=np.float64)
+    else:
+        dim_rate = np.asarray(rate_by_dim, dtype=np.float64)
+        if dim_rate.shape != (d_total,):
+            raise ValueError("rate_by_dim must have shape (d_total,)")
+        if np.any(dim_rate <= 0):
+            raise ValueError("rate_by_dim must be > 0")
+
+    return embeddings, mask, dim_to_partition, alpha, sigma2, weights, coverage, dim_rate
+
+
+def make_blockwise_rate_by_dim(
+    dim_to_partition: np.ndarray,
+    blocks_per_partition: Mapping[int, int] | Sequence[int] | int,
+    rates_by_partition_block: Mapping[int, Sequence[float]] | None = None,
+) -> np.ndarray:
+    """
+    Construct per-dimension rate multipliers for tier-1 blockwise rates.
+    """
+    dim_to_partition = np.asarray(dim_to_partition, dtype=np.int64)
+    if dim_to_partition.ndim != 1:
+        raise ValueError("dim_to_partition must be 1D")
+    if np.any(dim_to_partition < 0):
+        raise ValueError("dim_to_partition must be non-negative")
+    d_total = dim_to_partition.size
+    n_partitions = int(dim_to_partition.max()) + 1 if d_total > 0 else 0
+
+    def _nblocks(p: int) -> int:
+        if isinstance(blocks_per_partition, int):
+            return int(blocks_per_partition)
+        if isinstance(blocks_per_partition, Sequence):
+            if p >= len(blocks_per_partition):
+                raise ValueError("blocks_per_partition sequence too short")
+            return int(blocks_per_partition[p])
+        if p not in blocks_per_partition:
+            raise ValueError(f"missing block count for partition {p}")
+        return int(blocks_per_partition[p])
+
+    out = np.ones(d_total, dtype=np.float64)
+    for p in range(n_partitions):
+        idx = np.flatnonzero(dim_to_partition == p)
+        if idx.size == 0:
+            continue
+        n_blocks = max(1, _nblocks(p))
+        if rates_by_partition_block is None or p not in rates_by_partition_block:
+            block_rates = np.ones(n_blocks, dtype=np.float64)
+        else:
+            block_rates = np.asarray(rates_by_partition_block[p], dtype=np.float64)
+            if block_rates.shape != (n_blocks,):
+                raise ValueError(f"partition {p} block rate shape mismatch")
+            if np.any(block_rates <= 0):
+                raise ValueError("all block rates must be > 0")
+
+        # Contiguous blocks across dimensions in this partition.
+        bins = np.array_split(np.arange(idx.size), n_blocks)
+        for b, rel in enumerate(bins):
+            out[idx[rel]] = float(block_rates[b])
+    return out
